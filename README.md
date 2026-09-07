@@ -17,8 +17,8 @@ Bans, kicks, chat gags, voice mutes and warnings as one durable record, with plu
 storage so a community running several servers shares one list. Plus the live tools a
 moderator uses on somebody standing in front of them, teleporting included.
 
-Needs **dot-core** and nothing else. Works with [dot-voice](../dot-voice) and
-[dot-server](../dot-server) without importing either.
+Needs **dot-core** and nothing else. Works with [dot-voice](https://github.com/modcommunity/dot-voice) and
+[dot-server](https://github.com/modcommunity/dot-server) without importing either.
 
 ```bash
 ln -s ../../dot-core/addons/dot_core addons/dot_core
@@ -27,7 +27,7 @@ godot --headless --path . res://examples/moderation_selftest.tscn   # 231 checks
 
 ### Why this exists next to dot-server, which already bans
 
-[dot-server](../dot-server) has bans, kicks, admin flags with immunity, and an audit log,
+[dot-server](https://github.com/modcommunity/dot-server) has bans, kicks, admin flags with immunity, and an audit log,
 and none of that changes. What it does not have is a **mute that outlives a session**:
 `DotClientSession.silence()` sets two booleans on a session object, and a session is
 destroyed when its player disconnects. So a muted player reconnects and can talk again,
@@ -165,7 +165,7 @@ than something to work around. Every action goes on the target's history as a wa
 
 ### What is deliberately not here
 
-- **Console commands.** `mute`, `gag` and `ban` belong to [dot-server](../dot-server)'s
+- **Console commands.** `mute`, `gag` and `ban` belong to [dot-server](https://github.com/modcommunity/dot-server)'s
   console, which already has permission checking and an audit trail. This is the record
   behind them.
 - **A second ban list.** dot-server's `DotBanManager` is shipped, tested and works
