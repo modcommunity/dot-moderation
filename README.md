@@ -117,3 +117,7 @@ It knows nothing about your world: positions come from `position_fn` and moves g
 - **A limit on connections from one address.** That is admission, so it belongs where the sessions are: `sv_max_connections_per_ip` in dot-server.
 - **Kicking anybody.** This has no session list and no socket. It records that a kick happened; performing one is the server's.
 - **An appeals workflow.** `evidence` holds a ticket number. The workflow is a website.
+
+## Licence
+
+MIT. See [LICENSE](LICENSE).
