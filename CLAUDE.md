@@ -205,7 +205,7 @@ than against a mock. Two bugs came out of that, and neither could have:
 
 ## Mod tools
 
-`DotModTools` is the live half: teleport, bring, goto, send, return.
+`DotModTools` is the live half: teleport, bring, goto, send, return — and the handler table below.
 
 **`return_player` is what makes the rest usable.** Without an undo, "bring" is something a
 moderator hesitates to do mid-round, and a moderator who hesitates does not moderate. The
@@ -232,6 +232,31 @@ Other decisions worth not undoing:
 It knows nothing about the world: `position_fn` and `teleport_fn` are the host's, and
 without both every action refuses. `describe_lines()` says so, because refusing everything
 is indistinguishable from nobody using it.
+
+## The rest of the admin set is a handler table, and the reasons are the design
+
+`DotModTools.handlers` is one `Callable` per ability — noclip, god, buddha, freeze, slay, slap, respawn, health, speed, gravity, give, strip, rename, burn, blind, beacon — and a game fills in the ones that mean something in it. **Everything that is the same in every game is here; only the verb is the game's.** That split is the same one `position_fn` and `teleport_fn` made, and it is the reason the addon can still depend on dot-core alone: god mode is `invulnerable` on a `DotHealth` in one game, a flag on a monster in another, and nothing at all in a lobby.
+
+Decisions worth not undoing:
+
+- **An ability with no handler is refused, loudly, with the game's reason.** `unsupported_reasons` exists because "not supported" is an answer and "a 2D arena has no walls to pass through" is an explanation — and because a command that exists and silently does nothing is the one an admin files a bug about. `describe_lines()` lists both halves.
+- **Toggles are tracked here, with who turned them on.** A game knows a modifier is on; it cannot say that the senior admin put it there, which is the question a second moderator asks before undoing it.
+- **Respawn is a new body.** `respawned(id)` switches noclip and freeze off *through their handlers* — so the game's state and this record cannot disagree — and re-applies god and buddha (`persist_on_respawn`), because an admin who godded somebody meant "until I say", and a death is exactly when that would otherwise quietly end. **A slay untracks nothing**; the body keeps its freeze until the respawn clears it, and untracking early would leave a frozen modifier on a body this record calls free.
+- **Acting on yourself is never an immunity question.** Equal cannot act on equal, and everybody is equal to themselves, so the rule as written refused an admin noclipping themselves — the most common use of the command there is.
+- **A caller may state its own immunity** (`actor_immunity`). The console is not a player, so `immunity_fn("console")` answers about nobody.
+- **Validation is here, not in each handler.** `health 0` is refused rather than becoming a second way to slay somebody through a command that is not supposed to, and a multiplier is tracked as what the handler *applied* — a game whose speeds are a ladder gives the nearest step, and the admin is told the number they got.
+- **A timed release checks it is still the same grant.** A ten-second freeze, lifted at five and re-applied indefinitely at six, must not be ended by the first timer; each grant carries a serial.
+
+## The commands, and why they are here rather than in dot-server
+
+`DotModToolCommands` registers them on any console-shaped host, duck-typed in the shape `DotVoteCommands` set, so this addon still names no dot-server class. They cannot live in dot-server because dot-server does not know what a noclip is; they cannot be a game's because five games would write the same target parsing, and the one that got `@all` wrong would noclip a senior admin.
+
+- **One player is the server's `resolve_target`**, the function `kick` uses — the same name forms, the same refusal of an ambiguous name, the same immunity rule. Added here only what the server cannot know: `@all`, `@others`, and `@alive`, `@dead` and `@team:` when the game supplies `alive_fn` and `team_fn`. A protected player is **skipped from a group and counted in the reply**, because `@all` on a server with one senior admin on it should not do nothing to everybody else.
+- **A bare command is the caller**, and naming yourself is checked before `resolve_target`, which would refuse it for equal immunity.
+- **A name somebody already has is not registered.** A console handed a duplicate returns the existing command, and a module then unregisters it on unload — someone else's command, gone. A game's own `respawn` wins, and the collision is logged.
+- **Every command exists whether or not the game supports it**, so `!noclip` in a lobby answers with the lobby's reason rather than "unknown command".
+- **Nothing a player is told names the moderator.** Same rule as the punishment message, for the same reason.
+- **Three flags**: `slay` for handling a person, `cheats` for changing the game, `teleport` for moving people. dot-server's `DotAdminFlags` now names the first and last so a group file can grant them without an "unknown flag" warning.
 
 ## Immunity, in both directions
 
@@ -283,7 +308,7 @@ godot --headless --path . --import
 find . -name '*.gd' -not -path './.godot/*' | while read f; do
     godot --headless --path . --check-only --script "res://${f#./}"
 done
-godot --headless --path . res://examples/moderation_selftest.tscn   # 231 checks
+godot --headless --path . res://examples/moderation_selftest.tscn   # 270 checks
 ```
 
 The suite links `addons/dot_voice` so the last section can run. Without it that section
@@ -292,9 +317,7 @@ how a family ships two ends that never met.
 
 ## Things deliberately not here
 
-- **Console commands.** `mute`, `gag` and `ban` belong to dot-server's console, which has
-  permission checking, chat triggers, player targeting and an audit trail. This is the
-  record behind them, and `dot_ban_source` is how the two halves meet.
+- **Console commands for punishments.** `mute`, `gag` and `ban` belong to dot-server's console, which has permission checking, chat triggers, player targeting and an audit trail. This is the record behind them, and `dot_ban_source` is how the two halves meet. The live tools are the one exception, above: dot-server cannot know what they mean.
 - **A per-address connection limit.** Admission belongs where the sessions are:
   `sv_max_connections_per_ip` and `DotAddressGuard`, in dot-server.
 - **Kicking anybody.** No session list, no socket. It records that a kick happened.

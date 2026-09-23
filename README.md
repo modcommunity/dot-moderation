@@ -19,7 +19,7 @@ Needs **dot-core** and nothing else. Works with [dot-voice](https://github.com/m
 
 ```bash
 ln -s ../../dot-core/addons/dot_core addons/dot_core
-godot --headless --path . res://examples/moderation_selftest.tscn   # 231 checks
+godot --headless --path . res://examples/moderation_selftest.tscn   # 270 checks
 ```
 
 ### Why this exists next to dot-server, which already bans
@@ -97,6 +97,21 @@ A read failure is **never** an empty list. An API outage that read as "nobody is
 
 It knows nothing about your world: positions come from `position_fn` and moves go through `teleport_fn`, both yours. Positions are `Variant`, so **2D is a first-class user** rather than something to work around. Every action goes on the target's history as a warning (which enforces nothing), so "an admin moved me" has an answer.
 
+### The rest of the admin set
+
+Noclip, god, buddha, freeze, slay, slap, respawn, health, speed, gravity, give, strip, rename, burn, blind and beacon — as a **table of handlers the game fills in**, one per ability:
+
+```gdscript
+tools.handlers[DotModTools.ACTION_GOD] = func(id: StringName, args: Dictionary) -> DotResult:
+    world.player(id).health.invulnerable = args["on"]
+    return DotResult.success(args["on"])
+tools.unsupported_reasons[DotModTools.ACTION_NOCLIP] = "A 2D arena has no walls to pass through."
+```
+
+The addon owns what is the same in every game: the immunity check (acting on yourself is always allowed), the audit record with what was done, who has which toggle on and who turned it on, switching a freeze or a noclip off when the player respawns while god and buddha carry over (`persist_on_respawn`), forgetting all of it when they leave, and a timed release (`release_after`). An ability with no handler is refused with `CODE_UNSUPPORTED` and the game's reason, and `describe_lines()` lists what this game supports and what it refuses.
+
+`DotModToolCommands.install(host, tools, server)` puts all of it on a dot-server console — `noclip`, `god`, `buddha`, `freeze`, `unfreeze`, `slay`, `slap`, `respawn`, `rename`, `burn`, `blind`, `beacon`, `hp`, `speed`, `gravity`, `give`, `strip`, `bring`, `goto`, `send`, `return` and `modtools` — typable in chat as `!noclip`, with player completion. It is duck-typed the way dot-vote's commands are, so this addon still does not depend on dot-server. Targets are resolved by the server's own `resolve_target`, plus `@me`, `@all`, `@others`, and `@alive`, `@dead` and `@team:<name>` where the game says who is alive and on which side. The permission flags are `slay` for handling a person, `cheats` for changing the game, and `teleport` for moving players; `permissions` overrides any of them.
+
 ### Where a game plugs in
 
 | To change | Where |
@@ -104,6 +119,9 @@ It knows nothing about your world: positions come from `position_fn` and moves g
 | Where punishments live | `DotPunishmentStore` subclass |
 | Which database | `DotSqlDriver` subclass, or `DotPunishmentStoreRest` |
 | Where a player is, and how to move them | `DotModTools.position_fn` / `teleport_fn` |
+| What noclip, god, slay and the rest mean in your game | `DotModTools.handlers`, one callable per ability; `unsupported_reasons` for the ones you refuse |
+| What the commands are called, and which flag each needs | `DotModToolCommands.names` / `prefix` / `permissions` / `skip` |
+| Who counts as alive, and who is on which team | `DotModToolCommands.alive_fn` / `team_fn` |
 | How a peer maps to a person | `DotModerationManager.key_for_peer` |
 | Which servers a punishment covers | `DotModerationManager.server_scope` |
 | Whether dot-server enforces these bans | `DotModerationManager.register_ban_source` |
@@ -112,7 +130,7 @@ It knows nothing about your world: positions come from `position_fn` and moves g
 
 ### What is deliberately not here
 
-- **Console commands.** `mute`, `gag` and `ban` belong to [dot-server](https://github.com/modcommunity/dot-server)'s console, which already has permission checking and an audit trail. This is the record behind them.
+- **Console commands for punishments.** `mute`, `gag` and `ban` belong to [dot-server](https://github.com/modcommunity/dot-server)'s console, which already has permission checking and an audit trail. This is the record behind them. The live tools are the exception, because dot-server has no idea what noclip means: `DotModToolCommands` registers those, duck-typed, onto that same console.
 - **A second ban list.** dot-server's `DotBanManager` is shipped, tested and works standalone. This does bans too, including by address and enforced at connect through `dot_ban_source`, for a project that wants one record type for everything. A deployment should pick one rather than run both.
 - **A limit on connections from one address.** That is admission, so it belongs where the sessions are: `sv_max_connections_per_ip` in dot-server.
 - **Kicking anybody.** This has no session list and no socket. It records that a kick happened; performing one is the server's.
