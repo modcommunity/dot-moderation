@@ -21,6 +21,9 @@ extends RefCounted
 ##   centrally managed list should say so rather than appear to work and lose the record
 ##   on the next refresh.
 
+# Declared here and logged through by the subclasses -- the file, REST and SQL stores each
+# report unusable records on it. The base itself only returns DotResult, which the
+# manager logs. Not dead: deleting it breaks all three.
 const CHANNEL := "moderation.store"
 
 

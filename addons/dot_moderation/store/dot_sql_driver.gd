@@ -18,6 +18,8 @@ extends RefCounted
 ## parameters. A ban reason is typed by a moderator and quotes an attacker-supplied name
 ## half the time, so it is precisely the string that must not reach SQL as text.
 
+# Declared here and logged through by DotSqlDriverSqlite, which is what meets a real
+# database. The base only returns DotResult. Not dead: deleting it breaks that driver.
 const CHANNEL := "moderation.sql"
 
 
