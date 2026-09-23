@@ -19,7 +19,7 @@ extends Node
 
 const DATA := "user://dot_moderation_selftest"
 
-const CHECKS := 270
+const CHECKS := 271
 
 var _passed := 0
 var _failed := 0
@@ -1759,6 +1759,11 @@ func _test_mod_commands() -> void:
 	_check(is_equal_approx(tools.multiplier_of(&"2", DotModTools.ACTION_SPEED), 2.0)
 		and " ".join(speed.output).contains("Bob"),
 		"speed goes through the tools", " / ".join(speed.output))
+	# The ladder in the fake world above puts 2.2 on 2. The reply has to say the step, or
+	# the admin is told a number the player is not on.
+	_check(" ".join(speed.output).contains("2×") and not " ".join(speed.output).contains("2.2"),
+		"and the reply names the step the game applied, not the number typed",
+		" / ".join(speed.output))
 
 	var give := await _run_command(console, "give Bob rifle", admin, 50)
 	_check(" ".join(give.output).contains("nothing to give"),

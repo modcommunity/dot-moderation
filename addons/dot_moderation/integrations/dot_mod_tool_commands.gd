@@ -291,6 +291,8 @@ func _run(role: String, ctx: Object) -> void:
 	# For a toggle typed without on|off: what each target ended up as, so the reply can say
 	# "on" rather than "toggled" when every one of them went the same way.
 	var ended_on: Array[bool] = []
+	# For a multiplier: what each target was actually put on. See below.
+	var applied: Array = []
 
 	for session: Object in sessions:
 		var id := _id_of(session)
@@ -306,6 +308,9 @@ func _run(role: String, ctx: Object) -> void:
 		if TOGGLE_ROLES.has(role):
 			ended_on.append(tools.is_active(id, TOGGLE_ROLES[role]))
 
+		if (role == "speed" or role == "gravity") and (result.value is float or result.value is int):
+			applied.append(float(result.value))
+
 		_after(role, ctx, session, id, result, rest)
 
 	var switch_word := ""
@@ -314,7 +319,18 @@ func _run(role: String, ctx: Object) -> void:
 			"off" if ended_on.all(func(v: bool) -> bool: return not v) else "toggled"
 		)
 
-	_report(role, ctx, done, failures, skipped, rest, switch_word)
+	# A game whose speeds are a ladder applies the nearest step, and the reply and the room
+	# are told the step: "set to 2.2x speed" about a player on 2x is the tool contradicting
+	# its own record (`multiplier_of`, `modtools`) and the player's own line, which already
+	# said 2. The typed number stands only when the targets landed on different steps.
+	var said := rest
+
+	if not applied.is_empty() and applied.all(
+		func(v: float) -> bool: return is_equal_approx(v, float(applied[0]))
+	):
+		said = [_multiplier_text(float(applied[0]))] + rest.slice(1)
+
+	_report(role, ctx, done, failures, skipped, rest, switch_word, said)
 
 
 func _apply(
@@ -418,7 +434,7 @@ func _after(
 
 func _report(
 	role: String, ctx: Object, done: PackedStringArray, failures: PackedStringArray,
-	skipped: int, rest: Array, switch_word: String
+	skipped: int, rest: Array, switch_word: String, said: Array = []
 ) -> void:
 	for line in failures:
 		_reply(ctx, line)
@@ -434,7 +450,7 @@ func _report(
 		return
 
 	var who := done[0] if done.size() == 1 else "%d players" % done.size()
-	var what := _summary(role, rest, switch_word)
+	var what := _summary(role, said if not said.is_empty() else rest, switch_word)
 
 	_reply(ctx, "%s %s." % [who, what])
 
@@ -449,6 +465,11 @@ func _report(
 		var chat: Variant = server.get("chat")
 		if chat is Object and (chat as Object).has_method("announce_action"):
 			(chat as Object).call("announce_action", "%s %s." % [who, what])
+
+
+## `2`, not `2.0`; `0.25` stays `0.25`. An admin typed a number and reads one back.
+static func _multiplier_text(value: float) -> String:
+	return str(int(value)) if is_equal_approx(value, roundf(value)) else str(snappedf(value, 0.01))
 
 
 func _summary(role: String, rest: Array, switch_word: String = "") -> String:
@@ -483,7 +504,9 @@ func _target_line(role: String, id: StringName, result: DotResult, rest: Array) 
 		"speed", "gravity":
 			var applied: Variant = result.value
 			return "An admin set your %s to %s×." % [
-				role, str(applied) if applied is float or applied is int else str(rest[0])
+				role,
+				_multiplier_text(float(applied)) if applied is float or applied is int
+					else str(rest[0])
 			]
 		"goto", "return":
 			return ""
