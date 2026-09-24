@@ -309,7 +309,7 @@ godot --headless --path . --import
 find . -name '*.gd' -not -path './.godot/*' | while read f; do
     godot --headless --path . --check-only --script "res://${f#./}"
 done
-godot --headless --path . res://examples/moderation_selftest.tscn   # 275 checks
+godot --headless --path . res://examples/moderation_selftest.tscn   # 280 checks
 ```
 
 The suite links `addons/dot_voice` so the last section can run. Without it that section

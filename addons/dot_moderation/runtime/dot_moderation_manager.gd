@@ -201,7 +201,8 @@ func issue(
 	reason: String,
 	issuer: String = "console",
 	duration_sec: int = 0,
-	issuer_immunity: int = 0
+	issuer_immunity: int = 0,
+	evidence: Dictionary = {}
 ) -> DotResult:
 	if subject.strip_edges() == "":
 		return DotResult.fail(
@@ -242,6 +243,9 @@ func issue(
 		kind, subject, reason, issuer, duration_sec, server_scope
 	)
 	punishment.issuer_immunity = issuer_immunity
+	# Before the store sees it. Set afterwards, a SQL or REST store never persisted it and
+	# the file store only did on the next unrelated write.
+	punishment.evidence = evidence.duplicate(true)
 
 	if store != null and store.is_writable():
 		var stored: DotResult = await store.put(punishment)
@@ -545,6 +549,12 @@ func is_voice_muted(peer: int) -> bool:
 ## Whether a peer may use text chat.
 func is_chat_muted(peer: int) -> bool:
 	return is_gagged_key(_subject_for(peer))
+
+
+## The durable subject a peer's punishments are filed under: [member key_for_peer]'s answer.
+## Public for the live tools, which record against a person rather than a session id.
+func subject_for_peer(peer: int) -> String:
+	return _subject_for(peer)
 
 
 func _subject_for(peer: int) -> String:

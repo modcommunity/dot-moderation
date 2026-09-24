@@ -98,6 +98,14 @@ const TOGGLE_ROLES := {
 ## until somebody lifts it rather than a one-second one.
 const TIMED_TOGGLES: Array[String] = ["blind"]
 
+## Roles that help whoever uses them on themselves, and so need [constant FLAG_CHEATS] then.
+##
+## A moderator is often also a player. `respawn @me` is full health at a spawn mid-fight,
+## `slap @me` a shove in a direction of your choosing — speed on a timer server — and
+## `send`/`return` a teleport of yourself. The flag split exists to keep changing the game
+## behind `cheats`; on somebody else these are moderation, on yourself they are not.
+const SELF_NEEDS_CHEATS: Array[String] = ["respawn", "slap", "send", "return"]
+
 ## Past tense, for replies and announcements. A table because English is not regular
 ## enough to derive "slain" from "slay".
 const DONE := {
@@ -199,6 +207,9 @@ func bind(host: Object) -> DotResult:
 		)
 
 	var console := _console_of(host)
+
+	if not tools.subject_fn.is_valid():
+		tools.subject_fn = func(id: StringName) -> String: return _subject_of(id)
 
 	for role: String in COMMANDS:
 		if skip.has(role):
@@ -305,8 +316,20 @@ func _run(role: String, ctx: Object) -> void:
 	# For a multiplier: what each target was actually put on. See below.
 	var applied: Array = []
 
+	var caller: Variant = ctx.get("session")
+	var may_cheat := ctx.has_method("has_permission") and (
+		bool(ctx.call("has_permission", FLAG_CHEATS)) or bool(ctx.call("has_permission", "root"))
+	)
+
 	for session: Object in sessions:
 		var id := _id_of(session)
+
+		if session == caller and SELF_NEEDS_CHEATS.has(role) and not may_cheat:
+			failures.append("%s: using %s on yourself needs the %s flag" % [
+				str(session.get("display_name")), role, FLAG_CHEATS,
+			])
+			continue
+
 		var result: DotResult = await _apply(role, ctx, actor, actor_level, id, rest)
 		var shown := str(session.get("display_name"))
 
@@ -421,7 +444,9 @@ func _apply(
 			# DotModTools.goto's own rule.
 			return await tools.goto(actor, id)
 		"send":
-			var destination := _single(ctx, str(rest[0]) if rest.size() > 0 else "")
+			# The destination is somewhere to go, not somebody acted on, so it is looked up
+			# without the kick-style immunity check: a moderator may send somebody TO an admin.
+			var destination := _destination(ctx, str(rest[0]) if rest.size() > 0 else "")
 			if not destination.ok:
 				return destination
 			return await tools.send(actor, id, _id_of(destination.value as Object), actor_level)
@@ -556,6 +581,41 @@ func _status(ctx: Object, args: PackedStringArray) -> void:
 
 
 # --- Targets -----------------------------------------------------------------
+
+## A player named as a place, with no immunity asked: exactly one match, or a refusal.
+func _destination(ctx: Object, text: String) -> DotResult:
+	if text.strip_edges() == "":
+		return DotResult.fail(DotError.CODE_INVALID, "Send them to whom?")
+
+	if server.has_method("find_sessions"):
+		var matches: Variant = server.call("find_sessions", text, ctx.get("session"))
+		if matches is Array and (matches as Array).size() == 1:
+			return DotResult.success((matches as Array)[0])
+		if matches is Array and (matches as Array).size() > 1:
+			return DotResult.fail(DotError.CODE_INVALID, "More than one player matches '%s'." % text)
+		return DotResult.fail(DotError.CODE_INVALID, "Nobody matches '%s'." % text)
+
+	return _single(ctx, text)
+
+
+## The subject a tool id is filed under: the moderation manager's own peer mapping, found
+## through the session that id belongs to. The id itself when either is missing.
+func _subject_of(id: StringName) -> String:
+	var manager: Object = tools.manager
+	if manager == null or not manager.has_method("subject_for_peer"):
+		return String(id)
+
+	var session: Object = null
+	if String(id).is_valid_int() and server.has_method("session_by_userid"):
+		session = server.call("session_by_userid", String(id).to_int())
+		if session != null and _id_of(session) != id:
+			session = null
+
+	if session == null:
+		return String(id)
+
+	return str(manager.call("subject_for_peer", int(session.get("peer_id"))))
+
 
 ## Who a command acts on: `{sessions: Array, skipped: int}`.
 func _targets(ctx: Object, text: String) -> DotResult:
@@ -771,5 +831,7 @@ static func _parse_switch(text: String) -> Variant:
 
 static func _number(rest: Array, index: int, fallback: float) -> float:
 	if index < rest.size() and str(rest[index]).is_valid_float():
-		return str(rest[index]).to_float()
+		# `1e999` is a valid float and is infinity: a timer that never fires.
+		var value := str(rest[index]).to_float()
+		return value if is_finite(value) else fallback
 	return fallback

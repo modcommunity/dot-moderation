@@ -19,7 +19,7 @@ extends Node
 
 const DATA := "user://dot_moderation_selftest"
 
-const CHECKS := 275
+const CHECKS := 280
 
 var _passed := 0
 var _failed := 0
@@ -1539,6 +1539,27 @@ func _test_mod_abilities() -> void:
 		"every action goes on the target's history, with what was done",
 		"%d records" % history.size())
 
+	# What was done reaches the STORE, not only the object in memory: read back cold.
+	var reread := _manager(DATA.path_join("abilities.json"))
+	var _loaded: DotResult = await reread.load_all()
+	var stored := false
+	for punishment in reread.history_for("carol"):
+		if punishment.evidence.get("action", "") == "slap" and float(punishment.evidence.get("damage", 0)) == 25.0:
+			stored = true
+	_check(stored, "and what was done is in the store, not only on the record in memory",
+		"the evidence was set after the store had written the record")
+	reread.queue_free()
+
+	var infinite: DotResult = await tools.slap(&"senior", &"carol", INF)
+	_check(not infinite.ok and infinite.error.code == DotError.CODE_INVALID,
+		"an infinite slap is refused, not a way round god")
+
+	tools.subject_fn = func(id: StringName) -> String: return "uid:%s" % String(id)
+	var _filed: DotResult = await tools.slap(&"senior", &"carol", 1.0)
+	tools.subject_fn = Callable()
+	_check(not manager.history_for("uid:carol").is_empty(),
+		"a record is filed against the person subject_fn names, not the session id")
+
 	var lines := tools.describe_lines()
 	var listed := false
 	var reasoned := false
@@ -1792,6 +1813,18 @@ func _test_mod_commands() -> void:
 	var protected := await _run_command(console, "slap Boss", admin, 50)
 	_check(" ".join(protected.output).contains("immunity"),
 		"a single protected target is refused by the server's own rule")
+
+	world.calls.clear()
+	var boost := await _run_command(console, "slap @me", admin, 50)
+	var self_slapped := false
+	for c: Array in world.calls:
+		if c[0] == DotModTools.ACTION_SLAP:
+			self_slapped = true
+	_check(not self_slapped and " ".join(boost.output).contains("needs the cheats flag"),
+		"slapping yourself — a shove where you want it — needs cheats", " / ".join(boost.output))
+	var as_root := await _run_command(console, "slap @me", admin, 50, true)
+	_check(not " ".join(as_root.output).contains("needs the cheats flag"),
+		"and somebody holding it may", " / ".join(as_root.output))
 
 	var _renamed := await _run_command(console, "rename Carol Not Rude", admin, 50)
 	_check(carol.display_name == "Not Rude", "a rename reaches the server's name for them too")

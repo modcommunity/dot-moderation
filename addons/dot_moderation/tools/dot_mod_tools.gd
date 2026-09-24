@@ -78,6 +78,14 @@ const ACTION_GOTO := &"goto"
 const ACTION_SEND := &"send"
 const ACTION_RETURN := &"return"
 
+## The longest a timed action may run. A day: longer is a punishment, and punishments are
+## records with an expiry, not a timer on a live tool.
+const MAX_SECONDS := 86400.0
+
+## The most a single slap may hurt. More is a slay, which has its own flag-checked path
+## and its own answer to god and buddha.
+const MAX_DAMAGE := 1000.0
+
 # The abilities a game supplies handlers for. Names, not an enum, so a game's own verb
 # ("launch", "shrink") is a first-class entry in the same table rather than a fork.
 const ACTION_NOCLIP := &"noclip"
@@ -150,6 +158,14 @@ const ABILITIES: Array[StringName] = [
 
 ## Where a player is now. `func(id: StringName) -> Vector2/Vector3`.
 var position_fn: Callable = Callable()
+
+## Who an action is filed against. `func(id: StringName) -> String`.
+##
+## [b]Not the id itself when a server has accounts.[/b] A tool id is a session's userid,
+## which restarts at 1 every boot — so a record filed against "73" is read back after a
+## restart as somebody else's history. [DotModToolCommands] sets this from the moderation
+## manager's own peer mapping; unset, the id is used as it is.
+var subject_fn: Callable = Callable()
 
 ## Move a player. `func(id: StringName, to: Variant) -> void`.
 var teleport_fn: Callable = Callable()
@@ -543,20 +559,28 @@ func release(target: StringName, action: StringName) -> DotResult:
 ## seconds, unfroze them at five and froze them again indefinitely at six did not ask for
 ## the first timer to end the second freeze. The grant's timestamp is what tells them apart.
 func release_after(target: StringName, action: StringName, seconds: float) -> void:
-	if seconds <= 0.0 or not is_inside_tree():
+	if seconds <= 0.0 or not is_finite(seconds) or not is_inside_tree():
 		return
+
+	seconds = minf(seconds, MAX_SECONDS)
 
 	var entry: Variant = (_toggles.get(action, {}) as Dictionary).get(target)
 	var granted_at: int = int((entry as Dictionary).get("at", 0)) if entry is Dictionary else 0
 	var serial: int = int((entry as Dictionary).get("serial", 0)) if entry is Dictionary else 0
 
+	# A bound method, not a lambda: Godot drops a connection to a method of a freed object,
+	# and calls a lambda that captured one — an error per timer when the tools went with a
+	# game change inside the timed window.
 	get_tree().create_timer(seconds).timeout.connect(
-		func() -> void:
-			var now: Variant = (_toggles.get(action, {}) as Dictionary).get(target)
-			if now is Dictionary and int((now as Dictionary).get("at", 0)) == granted_at \
-					and int((now as Dictionary).get("serial", 0)) == serial:
-				var _released: DotResult = await release(target, action)
+		_release_if_same.bind(target, action, granted_at, serial)
 	)
+
+
+func _release_if_same(target: StringName, action: StringName, granted_at: int, serial: int) -> void:
+	var now: Variant = (_toggles.get(action, {}) as Dictionary).get(target)
+	if now is Dictionary and int((now as Dictionary).get("at", 0)) == granted_at \
+			and int((now as Dictionary).get("serial", 0)) == serial:
+		var _released: DotResult = await release(target, action)
 
 
 ## A player came back with a new body. Call from the game's own spawn path.
@@ -747,6 +771,17 @@ func _refuse(
 ## lines, and the one that forgot would be the one where "health 0" slays somebody through
 ## a command that is not supposed to.
 func _validate(action: StringName, args: Dictionary) -> String:
+	# Before any rule about one number: `1e999` is a valid float and is infinity, which
+	# made a timer that never fires and a slap that did infinite damage past god.
+	for key: Variant in args:
+		var value: Variant = args[key]
+		if (value is float or value is int) and not is_finite(float(value)):
+			return "That is not a number anybody can use."
+	if float(args.get("seconds", 0.0)) > MAX_SECONDS:
+		return "At most %d seconds." % int(MAX_SECONDS)
+	if float(args.get("damage", 0.0)) > MAX_DAMAGE:
+		return "At most %d damage; use slay to kill somebody." % int(MAX_DAMAGE)
+
 	match action:
 		ACTION_HEALTH:
 			var value := float(args.get("value", 0.0))
@@ -827,21 +862,6 @@ func _record(
 	if not record_actions or manager == null:
 		return
 
-	var result: DotResult = await manager.issue(
-		DotPunishment.Kind.WARN,
-		String(subject),
-		"%s by %s" % [String(action), String(actor)],
-		String(actor),
-		0
-	)
-
-	if not result.ok:
-		DotLog.debug(CHANNEL, "could not record a moderator action", {
-			"why": result.error.message
-		})
-		return
-
-	var punishment: DotPunishment = result.value
 	var evidence := {
 		"action": String(action),
 		"actor": String(actor),
@@ -855,7 +875,28 @@ func _record(
 		if value is bool or value is int or value is float or value is String:
 			evidence[str(key)] = value
 
-	punishment.evidence = evidence
+	var filed_as := String(subject)
+	if subject_fn.is_valid():
+		var mapped := str(subject_fn.call(subject))
+		if mapped != "":
+			filed_as = mapped
+
+	# The evidence goes in with the record, not onto it afterwards: a store writes what it
+	# was handed, and a detail set after the write reached no store but the file one.
+	var result: DotResult = await manager.issue(
+		DotPunishment.Kind.WARN,
+		filed_as,
+		"%s by %s" % [String(action), String(actor)],
+		String(actor),
+		0,
+		0,
+		evidence
+	)
+
+	if not result.ok:
+		DotLog.debug(CHANNEL, "could not record a moderator action", {
+			"why": result.error.message
+		})
 
 
 func describe() -> Dictionary:

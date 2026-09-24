@@ -19,7 +19,7 @@ Needs **dot-core** and nothing else. Works with [dot-voice](https://github.com/m
 
 ```bash
 ln -s ../../dot-core/addons/dot_core addons/dot_core
-godot --headless --path . res://examples/moderation_selftest.tscn   # 275 checks
+godot --headless --path . res://examples/moderation_selftest.tscn   # 280 checks
 ```
 
 ### Why this exists next to dot-server, which already bans
