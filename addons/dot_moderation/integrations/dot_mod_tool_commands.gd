@@ -64,7 +64,7 @@ const COMMANDS := {
 	"respawn": ["respawn", "<player>", "Put a player back at a spawn, alive", FLAG_SLAY, 1],
 	"rename": ["rename", "<player> <new name>", "Change a player's name", FLAG_SLAY, 2],
 	"burn": ["burn", "<player> [seconds]", "Set a player on fire", FLAG_SLAY, 1],
-	"blind": ["blind", "<player> [on|off]", "Black out a player's screen, or stop", FLAG_SLAY, 1],
+	"blind": ["blind", "<player> [on|off|seconds]", "Black out a player's screen, or stop", FLAG_SLAY, 1],
 	"beacon": ["beacon", "<player> [on|off]", "Make a player visible to everybody, or stop", FLAG_SLAY, 1],
 	"hp": ["hp", "<player> <health>", "Set a player's health", FLAG_CHEATS, 2],
 	"speed": ["speed", "<player> <multiplier>", "Scale how fast a player moves; 1 is normal", FLAG_CHEATS, 2],
@@ -86,6 +86,17 @@ const TOGGLE_ROLES := {
 	"blind": DotModTools.ACTION_BLIND,
 	"beacon": DotModTools.ACTION_BEACON,
 }
+
+## Toggles that also take a number of seconds in place of on|off, released by
+## [method DotModTools.release_after] when it runs out — freeze's rule, for the toggles a
+## moderator means as a spell rather than as a state.
+##
+## [b]Only where the player is a required argument.[/b] `noclip 5` already means "noclip
+## the player called 5", so a number there cannot also be a duration; `blind` always names
+## its target first, and its second word is free. The switch words are read first, so `1`
+## and `0` stay on and off as they are for every other toggle, and `blind bob 1` is a blind
+## until somebody lifts it rather than a one-second one.
+const TIMED_TOGGLES: Array[String] = ["blind"]
 
 ## Past tense, for replies and announcements. A table because English is not regular
 ## enough to derive "slain" from "slay".
@@ -340,9 +351,20 @@ func _apply(
 	if TOGGLE_ROLES.has(role):
 		var action: StringName = TOGGLE_ROLES[role]
 		var want: Variant = _parse_switch(str(rest[0])) if rest.size() > 0 else null
+		var timed := TIMED_TOGGLES.has(role)
+
+		if rest.size() > 0 and want == null and timed and _number(rest, 0, 0.0) > 0.0:
+			var seconds := _number(rest, 0, 0.0)
+			var held: DotResult = await tools.toggle(actor, id, action, true, actor_level)
+			if held.ok:
+				tools.release_after(id, action, seconds)
+			return held
 
 		if rest.size() > 0 and want == null:
-			return DotResult.fail(DotError.CODE_INVALID, "Say on or off, not '%s'." % str(rest[0]))
+			return DotResult.fail(DotError.CODE_INVALID, (
+				"Say on, off or a number of seconds, not '%s'." if timed
+				else "Say on or off, not '%s'."
+			) % str(rest[0]))
 
 		return await tools.toggle(actor, id, action, want, actor_level)
 

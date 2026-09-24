@@ -19,7 +19,7 @@ extends Node
 
 const DATA := "user://dot_moderation_selftest"
 
-const CHECKS := 271
+const CHECKS := 275
 
 var _passed := 0
 var _failed := 0
@@ -1764,6 +1764,26 @@ func _test_mod_commands() -> void:
 	_check(" ".join(speed.output).contains("2×") and not " ".join(speed.output).contains("2.2"),
 		"and the reply names the step the game applied, not the number typed",
 		" / ".join(speed.output))
+
+	# A blind for a spell: a number of seconds in place of on|off, released by the tools'
+	# own timer, as a timed freeze is. `1` is still the switch word, not one second.
+	tools.handlers[DotModTools.ACTION_BLIND] = world.handler(DotModTools.ACTION_BLIND)
+	var _spell := await _run_command(console, "blind Bob 0.1", admin, 50)
+	_check(tools.is_active(&"2", DotModTools.ACTION_BLIND), "blind takes a number of seconds")
+	await get_tree().create_timer(0.25).timeout
+	_check(not tools.is_active(&"2", DotModTools.ACTION_BLIND)
+		and world.last(DotModTools.ACTION_BLIND).size() == 3
+		and world.last(DotModTools.ACTION_BLIND)[2]["on"] == false,
+		"and lifts it through the handler when they run out")
+	var _held := await _run_command(console, "blind Bob 1", admin, 50)
+	await get_tree().create_timer(0.25).timeout
+	_check(tools.is_active(&"2", DotModTools.ACTION_BLIND),
+		"while `1` is the switch word, and holds until somebody lifts it")
+	var _lift := await _run_command(console, "blind Bob off", admin, 50)
+	var nonsense := await _run_command(console, "blind Bob soon", admin, 50)
+	_check(not tools.is_active(&"2", DotModTools.ACTION_BLIND)
+		and " ".join(nonsense.output).contains("number of seconds"),
+		"and anything else is refused, naming what it takes", " / ".join(nonsense.output))
 
 	var give := await _run_command(console, "give Bob rifle", admin, 50)
 	_check(" ".join(give.output).contains("nothing to give"),

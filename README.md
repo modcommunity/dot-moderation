@@ -19,7 +19,7 @@ Needs **dot-core** and nothing else. Works with [dot-voice](https://github.com/m
 
 ```bash
 ln -s ../../dot-core/addons/dot_core addons/dot_core
-godot --headless --path . res://examples/moderation_selftest.tscn   # 270 checks
+godot --headless --path . res://examples/moderation_selftest.tscn   # 275 checks
 ```
 
 ### Why this exists next to dot-server, which already bans
@@ -110,7 +110,7 @@ tools.unsupported_reasons[DotModTools.ACTION_NOCLIP] = "A 2D arena has no walls 
 
 The addon owns what is the same in every game: the immunity check (acting on yourself is always allowed), the audit record with what was done, who has which toggle on and who turned it on, switching a freeze or a noclip off when the player respawns while god and buddha carry over (`persist_on_respawn`), forgetting all of it when they leave, and a timed release (`release_after`). An ability with no handler is refused with `CODE_UNSUPPORTED` and the game's reason, and `describe_lines()` lists what this game supports and what it refuses.
 
-`DotModToolCommands.install(host, tools, server)` puts all of it on a dot-server console — `noclip`, `god`, `buddha`, `freeze`, `unfreeze`, `slay`, `slap`, `respawn`, `rename`, `burn`, `blind`, `beacon`, `hp`, `speed`, `gravity`, `give`, `strip`, `bring`, `goto`, `send`, `return` and `modtools` — typable in chat as `!noclip`, with player completion. It is duck-typed the way dot-vote's commands are, so this addon still does not depend on dot-server. Targets are resolved by the server's own `resolve_target`, plus `@me`, `@all`, `@others`, and `@alive`, `@dead` and `@team:<name>` where the game says who is alive and on which side. The permission flags are `slay` for handling a person, `cheats` for changing the game, and `teleport` for moving players; `permissions` overrides any of them.
+`DotModToolCommands.install(host, tools, server)` puts all of it on a dot-server console — `noclip`, `god`, `buddha`, `freeze`, `unfreeze`, `slay`, `slap`, `respawn`, `rename`, `burn`, `blind` (with an optional number of seconds), `beacon`, `hp`, `speed`, `gravity`, `give`, `strip`, `bring`, `goto`, `send`, `return` and `modtools` — typable in chat as `!noclip`, with player completion. It is duck-typed the way dot-vote's commands are, so this addon still does not depend on dot-server. Targets are resolved by the server's own `resolve_target`, plus `@me`, `@all`, `@others`, and `@alive`, `@dead` and `@team:<name>` where the game says who is alive and on which side. The permission flags are `slay` for handling a person, `cheats` for changing the game, and `teleport` for moving players; `permissions` overrides any of them.
 
 ### Where a game plugs in
 

@@ -245,6 +245,7 @@ Decisions worth not undoing:
 - **Acting on yourself is never an immunity question.** Equal cannot act on equal, and everybody is equal to themselves, so the rule as written refused an admin noclipping themselves — the most common use of the command there is.
 - **A caller may state its own immunity** (`actor_immunity`). The console is not a player, so `immunity_fn("console")` answers about nobody.
 - **Validation is here, not in each handler.** `health 0` is refused rather than becoming a second way to slay somebody through a command that is not supposed to, and a multiplier is tracked as what the handler *applied* — a game whose speeds are a ladder gives the nearest step, and the admin is told the number they got.
+- **`blind` takes a number of seconds where the other toggles take only on|off** (`TIMED_TOGGLES`), because a blind is a spell rather than a state and freeze already worked that way. Only where the target is required: `noclip 5` means the player called 5. The switch words are read first, so `blind bob 1` holds until lifted rather than for one second.
 - **A timed release checks it is still the same grant.** A ten-second freeze, lifted at five and re-applied indefinitely at six, must not be ended by the first timer; each grant carries a serial.
 
 ## The commands, and why they are here rather than in dot-server
@@ -308,7 +309,7 @@ godot --headless --path . --import
 find . -name '*.gd' -not -path './.godot/*' | while read f; do
     godot --headless --path . --check-only --script "res://${f#./}"
 done
-godot --headless --path . res://examples/moderation_selftest.tscn   # 270 checks
+godot --headless --path . res://examples/moderation_selftest.tscn   # 275 checks
 ```
 
 The suite links `addons/dot_voice` so the last section can run. Without it that section
