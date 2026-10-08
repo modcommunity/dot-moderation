@@ -19,7 +19,7 @@ Needs **dot-core** and nothing else. Works with [dot-voice](https://github.com/m
 
 ```bash
 ln -s ../../dot-core/addons/dot_core addons/dot_core
-godot --headless --path . res://examples/moderation_selftest.tscn   # 280 checks
+godot --headless --path . res://examples/moderation_selftest.tscn   # 256 checks
 ```
 
 ### Why this exists next to dot-server, which already bans
@@ -58,13 +58,13 @@ The table is defined once in `DotPunishmentSchema` and every backend holds the s
 | --- | --- | --- |
 | **JSON file** | `DotPunishmentStoreFile` | Works out of the box. Right for one server. |
 | **REST API** | `DotPunishmentStoreRest` | Works out of the box. Four endpoints; keep your own ban system. |
-| **SQLite** | `DotPunishmentStoreSql` + `DotSqlDriverSqlite` | Needs the [godot-sqlite](https://github.com/2shady4u/godot-sqlite) GDExtension. |
-| **PostgreSQL** | `DotPunishmentStoreSql` + `DotSqlDriverGateway` | Needs a driver extension, or an HTTP gateway beside the database. |
-| **MySQL** | same | same |
+| **SQLite** | `DotPunishmentStoreSql` + dot-sql's `DotSqlDriverSqlite` | Needs the [godot-sqlite](https://github.com/2shady4u/godot-sqlite) GDExtension. |
+| **PostgreSQL** | `DotPunishmentStoreSql` + dot-sql's `DotSqlDriverGateway` | Needs an HTTP gateway beside the database; dot-sql ships a reference one. |
+| **MySQL / MariaDB** | same | same |
 
 **Be aware of what Godot does not have.** There is no `SQLite`, `PostgreSQLClient` or `MySQL` class in the engine, and neither the Postgres nor the MySQL wire protocol can be spoken from GDScript without implementing an authentication handshake, a binary format and a connection pool. That is a project, not a file, and a half-finished one is a security problem rather than a missing feature.
 
-So the SQL half does everything that *can* be done here, which is the DDL per dialect, bound parameters, row mapping, upserts and indexes, and hands execution to a driver. Write a twenty-line `DotSqlDriver` for whatever extension you install, or put the database behind HTTP. **The second is what most deployments should do anyway:** a game server holding a Postgres password is a game server whose compromise is a compromise of the database.
+So the drivers, the per-dialect DDL and the schema versioning live in [dot-sql](https://github.com/modcommunity/dot-sql), shared by every addon that keeps a table, and this addon describes its table as plain data and hands it over. dot-sql is optional: the store reaches its driver duck-typed, so dot-moderation still depends only on dot-core. Put Postgres or MySQL behind dot-sql's HTTP gateway, which is what most deployments should do anyway: a game server holding a database password is a game server whose compromise is a compromise of the database.
 
 Statements are **always parameterised**. A ban reason is typed by a moderator and quotes the offender's name half the time, so it is exactly the string that must never reach SQL by concatenation.
 
@@ -117,7 +117,7 @@ The addon owns what is the same in every game: the immunity check (acting on you
 | To change | Where |
 | --- | --- |
 | Where punishments live | `DotPunishmentStore` subclass |
-| Which database | `DotSqlDriver` subclass, or `DotPunishmentStoreRest` |
+| Which database | a dot-sql driver on `DotPunishmentStoreSql.driver`, or `DotPunishmentStoreRest` |
 | Where a player is, and how to move them | `DotModTools.position_fn` / `teleport_fn` |
 | What noclip, god, slay and the rest mean in your game | `DotModTools.handlers`, one callable per ability; `unsupported_reasons` for the ones you refuse |
 | What the commands are called, and which flag each needs | `DotModToolCommands.names` / `prefix` / `permissions` / `skip` |

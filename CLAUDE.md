@@ -138,54 +138,19 @@ moderate with the nine hundred and say which one was dropped. Same as dot-map's 
 
 ## Storage: what is real, and what Godot cannot do
 
-The table is defined once in `DotPunishmentSchema` and emitted per dialect. Fourteen
-columns, the same everywhere, so a JSON file, a SQLite file, a Postgres cluster and a
-MySQL instance never disagree about what a punishment is. A schema written once per
-backend disagrees with itself within a month, and you find out when a ban reads back with
-no expiry.
+The table is defined once, in `DotPunishmentSchema.table_spec()`, as plain data. Fourteen columns, the same everywhere, so a JSON file, a SQLite file, a Postgres cluster and a MySQL instance never disagree about what a punishment is. A schema written once per backend disagrees with itself within a month, and you find out when a ban reads back with no expiry.
 
-Three dialect differences, each of which is fatal if you get it wrong:
+**The SQL itself is dot-sql's.** Until 2026-10-08 this addon carried its own `DotSqlDriver`, `DotSqlDriverSqlite`, `DotSqlDriverGateway` and `DotSqlDriverRecording`, and its own DDL per dialect. Two things made that wrong. The class names are dot-sql's now, and a `class_name` declared twice fails every script in a project that links both. And the DDL had two MySQL bugs no suite here could see: `CREATE INDEX IF NOT EXISTS` does not exist in MySQL 8, and the metadata table had a column named `key`, which is a reserved word there (`ERROR 1064`, confirmed on MariaDB 11). Both are handled once, in dot-sql's `DotSqlSchema`, for every addon that keeps a table.
 
-- **MySQL cannot index a `TEXT` column** without a prefix length, and `subject` is
-  indexed, so anything indexed is `VARCHAR`.
-- **Booleans.** SQLite and MySQL have none worth the name, so `revoked` is a small integer
-  everywhere and the row mapper converts. A `BOOLEAN` in Postgres and an `INTEGER` in
-  SQLite would need two mappers.
-- **Placeholders.** Postgres numbers them (`$1`), the other two do not (`?`). That is the
-  only reason a statement builder has to know the dialect.
+**The store reaches its driver duck-typed.** `DotPunishmentStoreSql.driver` is untyped and asked for `migrate`, `query`, `execute` and `upsert_sql`, so this addon still depends only on dot-core and parses in a project without dot-sql. Only the suites link dot-sql (the `/addons/dot_sql` line in `.gitignore`).
 
-**Time is Unix seconds in a `BIGINT`, never a timestamp type.** A timestamp carries a
-zone, or does not and pretends to, and the two servers reading this table are in different
-places.
+**The schema is versioned** through dot-sql's migrator under the component `dot_moderation:<table>`. A database from a newer build is refused rather than read with columns that changed meaning underneath it. The old `dot_punishments_meta` table is no longer written or read.
 
-### What cannot be done here, said plainly
+What the dialects still differ in, and why the spec is shaped the way it is: `id`, `subject` and `scope` are `key` columns (VARCHAR on MySQL) because all three are indexed and MySQL cannot index TEXT; `revoked` is 0/1 everywhere and `from_row` reads back a bool, an int or a string because each backend returns a different one; and time is Unix seconds in a BIGINT, never a timestamp type, because a timestamp carries a zone or pretends not to and two servers reading this table are in different places. Placeholders are `?` in every dialect (dot-sql's contract).
 
-There is no `SQLite`, `PostgreSQLClient` or `MySQL` class in Godot. Verified, not assumed:
+**Two suites, and both matter.** `moderation_selftest` drives the store against dot-sql's recording driver: which statements, which parameters, in which order, and the row mapping. `moderation_sql_live` runs the same store against real SQLite, Postgres and MySQL through dot-sql's reference gateway: `../dot-sql/tools/test_live.sh . res://examples/moderation_sql_live.tscn`, with `DOT_SQL_PG_DSN` and `DOT_SQL_MYSQL_DSN` set for the two servers. Passing on all three on 2026-10-08.
 
-```
-SQLite               false
-PostgreSQLClient     false
-MySQL                false
-```
-
-Neither the Postgres nor the MySQL protocol can be spoken from GDScript without
-implementing an authentication handshake (SCRAM-SHA-256, `caching_sha2_password`), a
-binary wire format and a connection pool. That is a project, and a half-finished one is a
-security problem rather than a missing feature.
-
-So the split is the same one dot-voice makes for microphones: **everything that can be
-done in GDScript is done and tested here**, and the one step that needs a native library
-goes through `DotSqlDriver`. `DotSqlDriverRecording` is what makes the store testable —
-it captures statements and answers with rows a test supplies, which covers generation,
-binding and mapping. Execution is the untested device layer, and the suite says so.
-
-`DotSqlDriverGateway` exists because putting the database behind HTTP is what most
-deployments should do anyway: a game server holding a Postgres password is a game server
-whose compromise is a compromise of the database.
-
-**Statements are always parameterised.** A ban reason is typed by a moderator and quotes
-the offender's name half the time. The suite asserts that a reason containing a quote
-never appears in the statement text.
+**Statements are always parameterised.** A ban reason is typed by a moderator and quotes the offender's name half the time. The suite asserts that a reason containing a quote never appears in the statement text, and the live suite writes one with a quote and an emoji and reads it back.
 
 ## The REST store, and the two bugs a real server caught
 
@@ -309,7 +274,7 @@ godot --headless --path . --import
 find . -name '*.gd' -not -path './.godot/*' | while read f; do
     godot --headless --path . --check-only --script "res://${f#./}"
 done
-godot --headless --path . res://examples/moderation_selftest.tscn   # 280 checks
+godot --headless --path . res://examples/moderation_selftest.tscn   # 256 checks, plus moderation_sql_live: 10 per database
 ```
 
 The suite links `addons/dot_voice` so the last section can run. Without it that section

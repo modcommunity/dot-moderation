@@ -19,7 +19,7 @@ extends Node
 
 const DATA := "user://dot_moderation_selftest"
 
-const CHECKS := 280
+const CHECKS := 256
 
 var _passed := 0
 var _failed := 0
@@ -821,82 +821,61 @@ func _voice_is_present() -> bool:
 # --- Storage backends ------------------------------------------------------
 
 func _test_schema() -> void:
-	_section("the punishment table, in three dialects")
+	_section("the punishment table, as a spec dot-sql renders")
 
-	for dialect in [
-		DotPunishmentSchema.Dialect.SQLITE,
-		DotPunishmentSchema.Dialect.POSTGRES,
-		DotPunishmentSchema.Dialect.MYSQL,
-	]:
-		var name := DotPunishmentSchema.dialect_name(dialect)
-		var statements := DotPunishmentSchema.ddl(dialect)
-		var create := statements[0]
+	# The spec, not the DDL: rendering it per dialect is dot-sql's job and is tested
+	# there, against real SQLite, Postgres and MySQL. What this addon owns is which
+	# columns exist, which are keys, and which are indexed.
+	var spec := DotPunishmentSchema.table_spec()
+	_check(DotSqlSchema.validate(spec).ok, "the table spec is valid", str(DotSqlSchema.validate(spec).error))
 
-		_check(
-			create.begins_with("CREATE TABLE IF NOT EXISTS dot_punishments"),
-			"%s: the table is created idempotently" % name,
-			"a server may run this on every boot, and an operator who made the table "
-			+ "by hand must not be fought with"
-		)
+	var columns := {}
+	for column in spec["columns"]:
+		columns[column["name"]] = column["type"]
 
-		# The fields you actually moderate with. Named individually rather than by
-		# counting columns, because a count passes when two of them are swapped.
-		for column in ["subject", "reason", "expires_at", "issuer", "kind", "revoked"]:
-			_check(create.contains(column), "%s: has %s" % [name, column])
-
-		_check(
-			create.contains("id") and create.contains("PRIMARY KEY"),
-			"%s: the id is the primary key" % name,
-			"which is what makes a write idempotent rather than duplicating a ban"
-		)
-
-		var joined := "\n".join(Array(statements))
-		_check(
-			joined.contains("subject_idx"),
-			"%s: subject is indexed" % name,
-			"every question this table is asked is 'what is against this person', on "
-			+ "the join path, while a player waits"
-		)
-		_check(joined.contains("active_idx"), "%s: and so is what is still in force" % name)
-
-	# MySQL cannot index a TEXT column without a prefix length, and subject IS indexed.
-	var mysql := DotPunishmentSchema.ddl(DotPunishmentSchema.Dialect.MYSQL)[0]
+	# Named individually rather than by counting, because a count passes when two of
+	# them are swapped.
+	for column in ["subject", "reason", "expires_at", "issuer", "kind", "revoked"]:
+		_check(columns.has(column), "has %s" % column)
 	_check(
-		mysql.contains("subject VARCHAR"),
-		"mysql: an indexed column is VARCHAR rather than TEXT",
+		columns.size() == DotPunishmentSchema.COLUMNS.size(),
+		"one column per mapped field (%d)" % columns.size()
+	)
+	_check(
+		spec["primary_key"] == ["id"],
+		"the id is the primary key",
+		"which is what makes a write idempotent rather than duplicating a ban"
+	)
+	_check(
+		columns["subject"] == "key" and columns["id"] == "key",
+		"indexed strings are keys, not text",
 		"MySQL cannot index a TEXT column without a prefix length"
 	)
-	var postgres := DotPunishmentSchema.ddl(DotPunishmentSchema.Dialect.POSTGRES)[0]
-	_check(postgres.contains("subject TEXT"), "postgres: and TEXT where that is fine")
-
-	# Times are Unix seconds in a 64-bit integer, never a timestamp type: a timestamp
-	# carries a zone, or does not and pretends to, and two servers reading this table are
-	# in different places.
 	_check(
-		postgres.contains("expires_at BIGINT"),
+		columns["expires_at"] == "bigint",
 		"expiry is Unix seconds in a BIGINT, not a timestamp"
 	)
-
-	# Placeholders. Postgres numbers them and the other two do not, which is the only
-	# reason the dialect matters to a statement builder.
+	var index_names := []
+	for index in spec["indexes"]:
+		index_names.append(index["name"])
 	_check(
-		DotPunishmentSchema.placeholder(1, DotPunishmentSchema.Dialect.POSTGRES) == "$1",
-		"postgres numbers its placeholders"
+		index_names.has("subject_idx"),
+		"subject is indexed",
+		"every question this table is asked is 'what is against this person', on "
+		+ "the join path, while a player waits"
+	)
+	_check(index_names.has("active_idx"), "and so is what is still in force")
+
+	# Rendered for MySQL, the one with the traps.
+	var mysql := DotSqlSchema.ddl(spec, DotSqlDialect.Kind.MYSQL)
+	_check(
+		mysql.size() == 1 and mysql[0].contains("KEY dot_punishments_subject_idx"),
+		"mysql: indexes inside the CREATE TABLE",
+		"MySQL 8 has no CREATE INDEX IF NOT EXISTS"
 	)
 	_check(
-		DotPunishmentSchema.placeholder(1, DotPunishmentSchema.Dialect.SQLITE) == "?",
-		"and sqlite does not"
-	)
-
-	var upsert_pg := DotPunishmentSchema.upsert(DotPunishmentSchema.Dialect.POSTGRES)
-	_check(upsert_pg.contains("ON CONFLICT(id) DO UPDATE"), "postgres upserts")
-	var upsert_my := DotPunishmentSchema.upsert(DotPunishmentSchema.Dialect.MYSQL)
-	_check(upsert_my.contains("ON DUPLICATE KEY UPDATE"), "and mysql spells it its way")
-	_check(
-		not upsert_pg.contains("'"),
-		"no statement contains a quoted value",
-		"a ban reason is typed by a moderator and quotes an attacker-supplied name half "
-		+ "the time, so it must never reach SQL by concatenation"
+		not DotPunishmentSchema.select_by_subject().contains("$"),
+		"statements use ? in every dialect"
 	)
 
 	# The row mapping, both directions, including the trap that already bit this addon.
@@ -949,20 +928,25 @@ func _test_schema() -> void:
 func _test_sql_store() -> void:
 	_section("the SQL store, against a driver that records what it is asked")
 
-	# The store's job is to generate correct statements, bind values in the right order
-	# and map rows back. None of that needs a real engine and all of it is where the bugs
-	# are. Execution is the part no headless run can cover; see the note at the end.
-	var driver := DotSqlDriverRecording.new(DotPunishmentSchema.Dialect.POSTGRES)
+	# The store's job is to send the right statements, bind values in the right order
+	# and map rows back. None of that needs a real engine; examples/moderation_sql_live
+	# runs the same store against real databases through dot-sql's gateway.
+	var driver := DotSqlDriverRecording.new(DotSqlDialect.Kind.POSTGRES)
+	driver.answers = {"SELECT version FROM": []}
 	var store := DotPunishmentStoreSql.new(driver)
 
 	var opened: DotResult = await store.open()
 	_check(opened.ok, "the store opens and creates its schema", str(opened.error))
 	_check(
-		driver.matching("CREATE TABLE").size() >= 2,
-		"the table and its metadata table are created (%d)"
-			% driver.matching("CREATE TABLE").size()
+		driver.matching("CREATE TABLE IF NOT EXISTS dot_punishments").size() == 1,
+		"the table is created"
 	)
 	_check(driver.matching("CREATE INDEX").size() >= 2, "and the indexes")
+	_check(
+		driver.matching("INSERT INTO dot_sql_migrations").size() == 1,
+		"and its schema version recorded",
+		"so a build that meets a newer database refuses it rather than misreading it"
+	)
 	_check(store.is_writable(), "and reports itself writable")
 
 	driver.clear()
@@ -981,10 +965,6 @@ func _test_sql_store() -> void:
 		_check(
 			params.size() == DotPunishmentSchema.COLUMNS.size(),
 			"with one bound parameter per column (%d)" % params.size()
-		)
-		_check(
-			str(statement["sql"]).contains("$1"),
-			"numbered for postgres"
 		)
 		# The reason contains a quote. If it reached the statement text rather than the
 		# parameters, this is where it would show.
@@ -1055,16 +1035,14 @@ func _test_sql_store() -> void:
 		"a read failure is reported rather than read as 'nobody is punished'"
 	)
 
-	# SQLite is the dialect most deployments will use, and its spelling differs.
-	var sqlite_driver := DotSqlDriverRecording.new(DotPunishmentSchema.Dialect.SQLITE)
-	var sqlite_store := DotPunishmentStoreSql.new(sqlite_driver)
-	await sqlite_store.open()
-	sqlite_driver.clear()
-	await sqlite_store.put(ban)
+	# A database written by a newer build is refused, not read.
+	var newer := DotSqlDriverRecording.new(DotSqlDialect.Kind.SQLITE)
+	newer.answers = {"SELECT version FROM": [{"version": 99}]}
+	var refused: DotResult = await DotPunishmentStoreSql.new(newer).open()
 	_check(
-		sqlite_driver.matching("INSERT INTO").size() == 1
-			and str(sqlite_driver.matching("INSERT INTO")[0]["sql"]).contains("?"),
-		"sqlite gets unnumbered placeholders"
+		not refused.ok,
+		"a database from a newer build is refused",
+		"columns that changed meaning underneath an old build are a ban that reads wrong"
 	)
 
 	# And the driver nobody has installed says so rather than failing later.
@@ -1075,14 +1053,6 @@ func _test_sql_store() -> void:
 		"the SQLite driver reports the extension is absent",
 		"rather than failing on the first write"
 	)
-	_check(
-		available.error != null and available.error.code == DotError.CODE_UNSUPPORTED,
-		"as CODE_UNSUPPORTED, which a host can branch on"
-	)
-	print("  note  DotSqlDriverSqlite and DotSqlDriverGateway are NOT executed here.")
-	print("        SQLite needs the godot-sqlite GDExtension; Postgres and MySQL need")
-	print("        a driver extension or an HTTP gateway. The statements they would")
-	print("        run are covered above; running them is not.")
 	_done()
 
 

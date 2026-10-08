@@ -2,32 +2,35 @@
 class_name DotPunishmentStoreSql
 extends DotPunishmentStore
 
-## Punishments in a real table, in whichever SQL a [DotSqlDriver] speaks.
+## Punishments in a real table, in whichever SQL a dot-sql driver speaks.
 ##
 ## [codeblock]
 ## var store := DotPunishmentStoreSql.new(DotSqlDriverSqlite.new("user://moderation.db"))
-## var opened := await store.open()      # creates the table if it is not there
+## var opened := await store.open()      # creates or migrates the table
 ## [/codeblock]
 ##
-## Everything dialect-specific comes from [DotPunishmentSchema], so SQLite, Postgres and
-## MySQL hold the same fourteen columns and this class contains no `if postgres` anywhere.
+## [b]The driver is duck-typed[/b] — held untyped and asked for `query`, `execute`,
+## `upsert_sql` and `migrate` — so dot-moderation does not depend on dot-sql and parses in
+## a project without it. Any object with those methods will do; dot-sql's are the ones that
+## exist. The table is [method DotPunishmentSchema.table_spec], rendered by the driver for
+## its own dialect, so this class contains no `if postgres` anywhere.
 ##
 ## [b]Statements are parameterised, always.[/b] A ban reason is typed by a moderator and
 ## half of them quote the name the offender was using, so it is exactly the string that
 ## must never reach SQL by concatenation. Nothing here builds a WHERE clause out of a
-## value; [method DotPunishmentSchema.placeholder] is the only way a value gets in.
+## value.
 
-## Where statements go.
-var driver: DotSqlDriver = null
+## Where statements go: a dot-sql driver, or anything shaped like one.
+var driver = null
 
 ## Table name, in case an operator already owns `punishments`.
 var table: String = DotPunishmentSchema.DEFAULT_TABLE
 
-## Create the table and indexes on [method open].
+## Create or migrate the table on [method open].
 ##
-## On, because the statements are `IF NOT EXISTS` and an operator who made the table by
-## hand is not fought with. Off for a deployment whose schema is managed by migrations
-## and which would rather this touched nothing.
+## On, because creation is `IF NOT EXISTS` and an operator who made the table by hand is
+## not fought with. Off for a deployment whose schema is managed elsewhere and which
+## would rather this touched nothing.
 var create_schema: bool = true
 
 ## Diagnostics.
@@ -35,7 +38,7 @@ var loads: int = 0
 var writes: int = 0
 
 
-func _init(p_driver: DotSqlDriver = null) -> void:
+func _init(p_driver = null) -> void:
 	driver = p_driver
 
 
@@ -52,7 +55,7 @@ func open() -> DotResult:
 	if driver == null:
 		return DotResult.fail(DotError.CODE_STATE, "No SQL driver.")
 
-	var available := driver.is_available()
+	var available: DotResult = driver.is_available()
 	if not available.ok:
 		return available
 
@@ -63,29 +66,20 @@ func open() -> DotResult:
 	if not create_schema:
 		return DotResult.success(true)
 
-	var statements: Array = []
-	for sql in DotPunishmentSchema.ddl(driver.dialect(), table):
-		statements.append([sql, []])
-
-	var created: DotResult = await driver.batch(statements)
-
-	if not created.ok:
-		return created.wrap("Could not create the punishment table.")
-
-	# Recorded so a future build can refuse a database it does not understand rather than
-	# reading columns that have changed meaning underneath it.
-	var stamped: DotResult = await driver.execute(
-		DotPunishmentSchema.upsert_meta(driver.dialect()),
-		["schema_version", str(DotPunishmentSchema.SCHEMA_VERSION)]
+	# Versioned rather than "create if missing": a database from an older build is
+	# brought forward, and one from a NEWER build is refused rather than read with
+	# columns that have changed meaning underneath it. One component per table, so two
+	# stores with different table names in one database keep separate versions.
+	var migrated: DotResult = await driver.migrate(
+		"%s:%s" % [DotPunishmentSchema.MIGRATION_COMPONENT, table],
+		DotPunishmentSchema.migration_steps(table)
 	)
 
-	if not stamped.ok:
-		DotLog.warn(CHANNEL, "could not stamp the schema version", {
-			"why": stamped.error.message
-		})
+	if not migrated.ok:
+		return migrated.wrap("Could not prepare the punishment table.")
 
 	DotLog.info(CHANNEL, "punishment table ready", {
-		"dialect": DotPunishmentSchema.dialect_name(driver.dialect()),
+		"dialect": DotPunishmentSchema.dialect_name(int(driver.dialect())),
 		"table": table,
 	})
 
@@ -154,7 +148,7 @@ func load_for(subject: String) -> DotResult:
 		return DotResult.fail(DotError.CODE_STATE, "The database is not open.")
 
 	var result: DotResult = await driver.query(
-		DotPunishmentSchema.select_by_subject(driver.dialect(), table), [subject]
+		DotPunishmentSchema.select_by_subject(table), [subject]
 	)
 
 	if not result.ok:
@@ -185,7 +179,7 @@ func put(punishment: DotPunishment) -> DotResult:
 	# records for one action, which is how a duplicate ban ends up in somebody's history
 	# and how a revoke ends up applying to only one of them.
 	var result: DotResult = await driver.execute(
-		DotPunishmentSchema.upsert(driver.dialect(), table),
+		driver.upsert_sql(table, PackedStringArray(DotPunishmentSchema.COLUMNS), PackedStringArray(["id"])),
 		DotPunishmentSchema.to_row(punishment)
 	)
 
@@ -201,7 +195,7 @@ func remove(id: String) -> DotResult:
 		return DotResult.fail(DotError.CODE_STATE, "The database is not open.")
 
 	var result: DotResult = await driver.execute(
-		DotPunishmentSchema.delete_by_id(driver.dialect(), table), [id]
+		DotPunishmentSchema.delete_by_id(table), [id]
 	)
 
 	if not result.ok:
@@ -216,9 +210,7 @@ func describe() -> Dictionary:
 		"store": store_name(),
 		"writable": is_writable(),
 		"table": table,
-		"dialect": DotPunishmentSchema.dialect_name(
-			driver.dialect() if driver != null else DotPunishmentSchema.Dialect.SQLITE
-		),
+		"dialect": DotPunishmentSchema.dialect_name(int(driver.dialect()) if driver != null else -1),
 		"loads": loads,
 		"writes": writes,
 		"driver": driver.describe() if driver != null else {},
